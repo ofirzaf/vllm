@@ -707,13 +707,23 @@ class SpeculativeConfig:
         ):
             target_vocab_size = self.target_model_config.get_vocab_size()
             draft_vocab_size = self.draft_model_config.get_vocab_size()
+            # Embedding compatibility: draft vocab_size must equal target vocab_size
             if target_vocab_size != draft_vocab_size:
                 raise ValueError(
-                    f"Target and draft model should have the same vocabulary size. "
-                    f"Target model vocab_size={target_vocab_size}. "
+                    f"Target and draft model should have the same vocabulary "
+                    f"size. Target model vocab_size={target_vocab_size}. "
                     f"Draft model vocab_size={draft_vocab_size}. "
-                    f"Using models with different tokenizers can cause out-of-bounds "
-                    f"errors during speculative decoding."
+                    f"Using models with different tokenizers can cause "
+                    f"out-of-bounds errors during speculative decoding."
+                )
+            # If draft has pruned output vocabulary, validate it
+            draft_hf_config = self.draft_model_config.hf_config
+            pruned_vocab_size = getattr(draft_hf_config, "draft_vocab_size", None)
+            if pruned_vocab_size is not None and pruned_vocab_size > target_vocab_size:
+                raise ValueError(
+                    f"Draft model draft_vocab_size ({pruned_vocab_size}) "
+                    f"cannot be larger than target model "
+                    f"vocab_size ({target_vocab_size})."
                 )
 
     def use_eagle(self) -> bool:
@@ -721,6 +731,20 @@ class SpeculativeConfig:
 
     def uses_draft_model(self) -> bool:
         return self.method == "draft_model"
+
+    def needs_draft_vocab_remapping(self) -> bool:
+        """Returns True if draft model uses a smaller output vocabulary."""
+        if self.method != "draft_model":
+            return False
+        if self.target_model_config is None or self.draft_model_config is None:
+            return False
+        draft_vocab_size = getattr(
+            self.draft_model_config.hf_config, "draft_vocab_size", None
+        )
+        if draft_vocab_size is None:
+            return False
+        target_vocab_size = self.target_model_config.get_vocab_size()
+        return draft_vocab_size < target_vocab_size
 
     def __repr__(self) -> str:
         method = self.method
